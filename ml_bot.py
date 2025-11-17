@@ -25,16 +25,45 @@ WATCHLIST = os.getenv("WATCHLIST", "").split(",")
 WATCHLIST = [s.strip().upper() for s in WATCHLIST if s.strip()]
 
 # ---------------------------------------
-# Load the trained model
+# Load the trained model (robust handling)
 # ---------------------------------------
 
 MODEL_PATH = os.getenv("MODEL_PATH", "model.joblib")
 
+# These are the features created in build_features().
+# If the saved file is just a raw model (not a dict bundle),
+# we will assume it was trained on these.
+DEFAULT_FEATURE_COLS = [
+    "ret_1",
+    "ret_2",
+    "ret_5",
+    "sma10",
+    "sma20",
+    "sma50",
+    "rsi14",
+    "vol_z",
+]
+
 try:
-    bundle = load(MODEL_PATH)
-    MODEL = bundle["model"]
-    FEATURE_COLS = bundle["feature_cols"]
-    print(f"[ML BOT] Loaded model from {MODEL_PATH} with features: {FEATURE_COLS}")
+    print(f"[ML BOT] Attempting to load model from '{MODEL_PATH}'")
+    loaded = load(MODEL_PATH)
+
+    if isinstance(loaded, dict):
+        # New-style bundle: {"model": ..., "feature_cols": [...]}
+        MODEL = loaded.get("model")
+        FEATURE_COLS = loaded.get("feature_cols", DEFAULT_FEATURE_COLS)
+        print(f"[ML BOT] Loaded dict bundle from {MODEL_PATH}")
+    else:
+        # Old-style: just the model object itself
+        MODEL = loaded
+        FEATURE_COLS = DEFAULT_FEATURE_COLS
+        print(f"[ML BOT] Loaded raw model from {MODEL_PATH} using DEFAULT_FEATURE_COLS")
+
+    if MODEL is None:
+        raise ValueError("MODEL is None after loading.")
+
+    print(f"[ML BOT] Using features: {FEATURE_COLS}")
+
 except Exception as e:
     print(f"[ML BOT] ERROR loading model file '{MODEL_PATH}': {e}")
     MODEL = None
@@ -144,6 +173,7 @@ def predict_symbol(symbol: str):
         bias = "Bullish"
     elif down_prob >= 0.65:
         bias = "Bearish"
+        # Note: 0.65 threshold is arbitrary, tweak as you like
     else:
         bias = "Neutral"
 
@@ -210,8 +240,10 @@ async def scan_loop():
 
         embed.add_field(
             name="Prediction",
-            value=f"📈 Up: **{result['up_prob']*100:.1f}%**\n"
-                  f"📉 Down: **{result['down_prob']*100:.1f}%**",
+            value=(
+                f"📈 Up: **{result['up_prob']*100:.1f}%**\n"
+                f"📉 Down: **{result['down_prob']*100:.1f}%**"
+            ),
             inline=True,
         )
 
@@ -256,8 +288,10 @@ async def predict_cmd(ctx, symbol: str):
 
     embed.add_field(
         name="Prediction",
-        value=f"📈 Up: **{result['up_prob']*100:.1f}%**\n"
-              f"📉 Down: **{result['down_prob']*100:.1f}%**",
+        value=(
+            f"📈 Up: **{result['up_prob']*100:.1f}%**\n"
+            f"📉 Down: **{result['down_prob']*100:.1f}%**"
+        ),
         inline=True,
     )
 
