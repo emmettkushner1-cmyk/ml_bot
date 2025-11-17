@@ -18,7 +18,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL_SECONDS", "60"))
 
-# Hard-coded timeframe: no env var needed
+# Hard-coded timeframe so Railway doesn't need a TIMEFRAME secret
 TIMEFRAME = "1d"
 
 WATCHLIST = os.getenv("WATCHLIST", "").split(",")
@@ -36,7 +36,7 @@ try:
     FEATURE_COLS = bundle["feature_cols"]
     print(f"[ML BOT] Loaded model from {MODEL_PATH} with features: {FEATURE_COLS}")
 except Exception as e:
-    print(f"[ML BOT] ERROR loading model from {MODEL_PATH}: {e}")
+    print(f"[ML BOT] ERROR loading model file '{MODEL_PATH}': {e}")
     MODEL = None
     FEATURE_COLS = []
 
@@ -45,7 +45,7 @@ except Exception as e:
 # ---------------------------------------
 
 intents = discord.Intents.default()
-intents.message_content = True  # needed for reading message content / commands
+intents.message_content = True  # needed so commands like !predict work
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -62,19 +62,24 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     rs = avg_gain / (avg_loss + 1e-9)
     return 100 - (100 / (1 + rs))
 
+
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
+    # Returns
     df["ret_1"] = df["Close"].pct_change()
     df["ret_2"] = df["Close"].pct_change(2)
     df["ret_5"] = df["Close"].pct_change(5)
 
+    # Moving averages
     df["sma10"] = df["Close"].rolling(10).mean()
     df["sma20"] = df["Close"].rolling(20).mean()
     df["sma50"] = df["Close"].rolling(50).mean()
 
+    # RSI
     df["rsi14"] = compute_rsi(df["Close"], 14)
 
+    # Volume z-score
     vol_mean = df["Volume"].rolling(20).mean()
     vol_std = df["Volume"].rolling(20).std()
     df["vol_z"] = (df["Volume"] - vol_mean) / (vol_std + 1e-9)
@@ -90,7 +95,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 # Data download helper
 # ---------------------------------------
 
-def download_recent(symbol: str):
+def download_recent(symbol: str) -> pd.DataFrame:
     try:
         df = yf.download(symbol, period="6mo", interval=TIMEFRAME, progress=False)
         if isinstance(df.columns, pd.MultiIndex):
@@ -225,6 +230,7 @@ async def scan_loop():
 @bot.command()
 async def ping(ctx):
     await ctx.send("pong 🏓")
+
 
 @bot.command(name="predict")
 async def predict_cmd(ctx, symbol: str):
