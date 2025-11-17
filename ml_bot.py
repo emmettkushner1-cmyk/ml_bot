@@ -17,22 +17,26 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL_SECONDS", "60"))
-TIMEFRAME = os.getenv("TIMEFRAME", "1d")
-WATCHLIST = os.getenv("WATCHLIST", "").split(",")
 
+# Hard-coded timeframe: no env var needed
+TIMEFRAME = "1d"
+
+WATCHLIST = os.getenv("WATCHLIST", "").split(",")
 WATCHLIST = [s.strip().upper() for s in WATCHLIST if s.strip()]
 
 # ---------------------------------------
 # Load the trained model
 # ---------------------------------------
 
+MODEL_PATH = os.getenv("MODEL_PATH", "model.joblib")
+
 try:
-    bundle = load(os.getenv("MODEL_PATH", "model.pkl"))
+    bundle = load(MODEL_PATH)
     MODEL = bundle["model"]
     FEATURE_COLS = bundle["feature_cols"]
-    print(f"[ML BOT] Loaded model with features: {FEATURE_COLS}")
+    print(f"[ML BOT] Loaded model from {MODEL_PATH} with features: {FEATURE_COLS}")
 except Exception as e:
-    print(f"[ML BOT] ERROR loading model.pkl: {e}")
+    print(f"[ML BOT] ERROR loading model from {MODEL_PATH}: {e}")
     MODEL = None
     FEATURE_COLS = []
 
@@ -41,6 +45,8 @@ except Exception as e:
 # ---------------------------------------
 
 intents = discord.Intents.default()
+intents.message_content = True  # needed for reading message content / commands
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ---------------------------------------
@@ -77,7 +83,8 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
 
-    return df.iloc[-1:].copy()  # latest row only
+    # keep only the latest row
+    return df.iloc[-1:].copy()
 
 # ---------------------------------------
 # Data download helper
@@ -98,18 +105,28 @@ def download_recent(symbol: str):
 # ---------------------------------------
 
 def predict_symbol(symbol: str):
+    symbol = symbol.upper()
+
     if MODEL is None:
+        print("[ML BOT] MODEL is None; cannot predict.")
         return None
 
     df = download_recent(symbol)
     if df.empty:
+        print(f"[ML BOT] No data for {symbol}.")
         return None
 
     feats = build_features(df)
     if feats.empty:
+        print(f"[ML BOT] No features for {symbol}.")
         return None
 
-    X = feats[FEATURE_COLS].values
+    try:
+        X = feats[FEATURE_COLS].values
+    except KeyError as e:
+        print(f"[ML BOT] Feature mismatch for {symbol}: {e}")
+        return None
+
     probs = MODEL.predict_proba(X)[0]
 
     down_prob = float(probs[0])
@@ -153,9 +170,10 @@ async def on_ready():
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
         await channel.send("🤖 ML Bot is online and ready.")
+    else:
+        print(f"[ML BOT] Could not find channel ID {CHANNEL_ID}")
     if not scan_loop.is_running():
         scan_loop.start()
-
 
 # ---------------------------------------
 # Scanning Loop
@@ -187,7 +205,8 @@ async def scan_loop():
 
         embed.add_field(
             name="Prediction",
-            value=f"📈 Up: **{result['up_prob']*100:.1f}%**\n📉 Down: **{result['down_prob']*100:.1f}%**",
+            value=f"📈 Up: **{result['up_prob']*100:.1f}%**\n"
+                  f"📉 Down: **{result['down_prob']*100:.1f}%**",
             inline=True,
         )
 
@@ -199,15 +218,50 @@ async def scan_loop():
 
         await channel.send(embed=embed)
 
-
 # ---------------------------------------
-# Ping Command
+# Commands
 # ---------------------------------------
 
 @bot.command()
 async def ping(ctx):
     await ctx.send("pong 🏓")
 
+@bot.command(name="predict")
+async def predict_cmd(ctx, symbol: str):
+    """Manual prediction command: !predict AAPL"""
+    result = predict_symbol(symbol)
+    symbol = symbol.upper()
+
+    if result is None:
+        await ctx.send(f"❌ Couldn't generate a forecast for `{symbol}` right now.")
+        return
+
+    embed = discord.Embed(
+        title=f"{symbol} ML Forecast ({TIMEFRAME})",
+        color=discord.Color.green(),
+        timestamp=datetime.utcnow()
+    )
+
+    embed.add_field(
+        name="Price",
+        value=f"${result['price']:.2f}",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Prediction",
+        value=f"📈 Up: **{result['up_prob']*100:.1f}%**\n"
+              f"📉 Down: **{result['down_prob']*100:.1f}%**",
+        inline=True,
+    )
+
+    embed.add_field(
+        name="Bias / Confidence",
+        value=f"**{result['bias']}** ({result['confidence']})",
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
 
 # ---------------------------------------
 # Start Bot
@@ -215,6 +269,6 @@ async def ping(ctx):
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
-        print("❌ Missing DISCORD_TOKEN in .env")
+        print("❌ Missing DISCORD_TOKEN in environment")
     else:
         bot.run(DISCORD_TOKEN)
