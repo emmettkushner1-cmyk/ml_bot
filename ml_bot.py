@@ -30,9 +30,7 @@ WATCHLIST = [s.strip().upper() for s in WATCHLIST if s.strip()]
 
 MODEL_PATH = os.getenv("MODEL_PATH", "model.joblib")
 
-# These are the features created in build_features().
-# If the saved file is just a raw model (not a dict bundle),
-# we will assume it was trained on these.
+# These are the full set of features our build_features() can create.
 DEFAULT_FEATURE_COLS = [
     "ret_1",
     "ret_2",
@@ -56,13 +54,26 @@ try:
     else:
         # Old-style: just the model object itself
         MODEL = loaded
-        FEATURE_COLS = DEFAULT_FEATURE_COLS
-        print(f"[ML BOT] Loaded raw model from {MODEL_PATH} using DEFAULT_FEATURE_COLS")
+
+        # Try to match the number of features the model expects
+        n_features = getattr(MODEL, "n_features_in_", None)
+        if n_features is not None and n_features <= len(DEFAULT_FEATURE_COLS):
+            FEATURE_COLS = DEFAULT_FEATURE_COLS[:n_features]
+            print(
+                f"[ML BOT] Loaded raw model from {MODEL_PATH} "
+                f"expecting {n_features} features; using FEATURE_COLS={FEATURE_COLS}"
+            )
+        else:
+            FEATURE_COLS = DEFAULT_FEATURE_COLS
+            print(
+                f"[ML BOT] Loaded raw model from {MODEL_PATH} but could not infer "
+                f"n_features_in_; using DEFAULT_FEATURE_COLS={FEATURE_COLS}"
+            )
 
     if MODEL is None:
         raise ValueError("MODEL is None after loading.")
 
-    print(f"[ML BOT] Using features: {FEATURE_COLS}")
+    print(f"[ML BOT] Final FEATURE_COLS in use: {FEATURE_COLS}")
 
 except Exception as e:
     print(f"[ML BOT] ERROR loading model file '{MODEL_PATH}': {e}")
@@ -173,7 +184,6 @@ def predict_symbol(symbol: str):
         bias = "Bullish"
     elif down_prob >= 0.65:
         bias = "Bearish"
-        # Note: 0.65 threshold is arbitrary, tweak as you like
     else:
         bias = "Neutral"
 
