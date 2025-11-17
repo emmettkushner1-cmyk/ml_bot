@@ -1,0 +1,14 @@
+discord.py
+feedparser
+python-dotenv
+yfinance
+pandas
+pytz
+requests
+numpy
+joblib
+scikit-learn
+
+
+
+
